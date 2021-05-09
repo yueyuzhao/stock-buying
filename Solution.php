@@ -4,71 +4,97 @@ require_once('./helpers.php');
 
 class Solution
 {
+    /**
+     * @var int 一手股票的数量
+     */
     public static $ONE_HAND = 100;
 
     /**
+     * @var array 一手的股票价格数组
+     */
+    protected $prices = [];
+
+    /**
+     * @var array 股票仓位数组
+     */
+    protected $weights = [];
+
+    /**
+     * @var float 总预算
+     */
+    protected $total = 0.0;
+
+    /**
+     * Solution constructor.
+     * @param $prices array 股票价格数组
+     * @param $weights array 股票仓位数组
+     * @param $total float 总预算
+     */
+    public function __construct(array $prices, array $weights, float $total)
+    {
+        foreach ($prices as $price) {
+            $this->prices[] = $price * static::$ONE_HAND;
+        }
+        $this->weights = $weights;
+        $this->total = $total;
+    }
+
+    /**
      * 计算最佳的购买购买方案
-     * @param $stocks array 股票价格和股票的配置仓位比例
-     * @param $total int 预计花费的总金额
+     * @param $maxPlans int 获取几个购买方案
      * @return array
      */
-    public static function calc(array $stocks, int $total): array
+    public function calc($maxPlans = 5): array
     {
-        if (!static::check($stocks, $total)) {
+        if (!static::check()) {
             return [];
-        }
-        $prices = [];
-        foreach ($stocks[0] as $price) {
-            $prices[] = $price * static::$ONE_HAND;
         }
         // 按照仓位配置比例，先购买
         $floorHand = PHP_INT_MAX;
         $floorIndex = 0;
-        $weights = $stocks[1];
-        foreach ($prices as $i => $price) {
-            $hand = floor($total * $weights[$i] / $price);
+        foreach ($this->prices as $i => $price) {
+            $hand = floor($this->total * $this->weights[$i] / $price);
             if ($hand < $floorHand) {
                 $floorHand = $hand;
                 $floorIndex = $i;
             }
         }
-        $floorMoney = $prices[$floorIndex] * $floorHand;
-        $hands = [];
-        $left = $total;
-        foreach ($weights as $i => $weight) {
-            $price = $prices[$i];
-            $hands[$i] = floor($floorMoney * $weight / $weights[$floorIndex] / $price);
-            $left -= $hands[$i] * $price;
+        $plans = [];
+        for ($i = 0; $i < 5; $i++) {
+            if ($floorHand - $i < 0) {
+                break;
+            }
+            $pre = $this->preBuy($floorIndex, $floorHand - $i);
+            // 剩余金额中找出最小的组合
+            $_plans = $this->getPlans($this->prices, $pre['left']);
+            foreach ($_plans as $plan) {
+                $plan['hands'] = array_add($pre['hands'], $plan['hands']);
+                $signature = join('_', $plan['hands']);
+                if (array_key_exists($signature, $plans)) {
+                    continue;
+                }
+                $plan['dispersion'] = $this->calcDispersion($plan);
+                $plans[$signature] = $plan;
+            }
         }
-        // 剩余金额中找出最小的组合
-        $plans = static::getPlans($prices, $left);
-        // 合并已经买的方案
-        $res = [];
-        foreach ($plans as $plan) {
-            $plan['hand'] = array_add($hands, $plan['hand']);
-            $res[] = $plan;
-        }
-        return static::findBestPlan($res, $stocks, $total);
+        return static::findBestPlans($plans, $maxPlans);
     }
 
     /**
      * 检查数据是否合法
-     * @param $stocks
-     * @param $total
      * @return bool
      */
-    protected static function check($stocks, $total): bool
+    private function check(): bool
     {
-        if (!is_array($stocks) || count($stocks) != 2 || $total < 0) {
+        if ($this->total <= 0) {
             return false;
         }
-        list($prices, $weights) = $stocks;
-        if (count($prices) != count($weights) || array_sum($weights) > 1) {
+        if (count($this->prices) != count($this->weights)) {
             return false;
         }
         // 价格和份额不能为负值
-        foreach ($prices as $i => $price) {
-            if ($price < 0 || $weights[$i] < 0) {
+        foreach ($this->prices as $i => $price) {
+            if ($price < 0 || $this->weights[$i] < 0) {
                 return false;
             }
         }
@@ -76,22 +102,44 @@ class Solution
     }
 
     /**
+     * 根据持仓比例，按照最低购买手数的购买方案
+     * @param $index int 最少购买股票手数的索引
+     * @param $hand int 购买的手数
+     * @return array
+     */
+    private function preBuy(int $index, int $hand): array
+    {
+        $floorMoney = $this->prices[$index] * $hand;
+        $hands = [];
+        $left = $this->total;
+        foreach ($this->weights as $i => $weight) {
+            $price = $this->prices[$i];
+            $hands[$i] = floor($floorMoney * $weight / $this->weights[$index] / $price);
+            $left -= $hands[$i] * $price;
+        }
+        return [
+            'hands' => $hands,
+            'left' => $left,
+        ];
+    }
+
+    /**
      * 都不买的情况是最差的策略，但是如果是客观原因导致的，结果集中已经包含这种情况
      * 但凡能买任意一手，都比全都不买更优，这种情况下无需返回都不买的方案
-     * @param $prices
-     * @param $total
-     * @return array|array[]
+     * @param $prices array
+     * @param $total float
+     * @return array
      */
-    public static function getPlans($prices, $total): array
+    private function getPlans(array $prices, float $total): array
     {
         if (empty($prices)) {
             return [];
         }
         // 判断剩余金额能否能买任意一手
         $can = false;
-        $hand = [];
+        $hands = [];
         foreach ($prices as $i => $price) {
-            $hand[$i] = 0;
+            $hands[$i] = 0;
             if ($price <= $total) {
                 $can = true;
             }
@@ -100,7 +148,7 @@ class Solution
         if (!$can) {
             return [
                 [
-                    'hand' => $hand,
+                    'hands' => $hands,
                     'left' => $total,
                 ],
             ];
@@ -113,17 +161,17 @@ class Solution
         if ($left >= 0) {
             $plans = static::getPlans($prices, $left);
             foreach ($plans as $item) {
-                $item['hand'][0] += 1;
+                $item['hands'][0] += 1;
                 $res[] = $item;
             }
         }
         // B: 不买第一个品种的情况
         array_shift($prices);
-        $plans = static::getPlans($prices, $total);
+        $plans = $this->getPlans($prices, $total);
         foreach ($plans as $item) {
             // 把第一个品种的购买数量加入到数组中
             // 如果有买的情况，但是也有都不买的情况，
-            array_unshift($item['hand'], 0);
+            array_unshift($item['hands'], 0);
             $res[] = $item;
         }
         return static::findMinLeftPlans($res);
@@ -134,7 +182,7 @@ class Solution
      * @param $plans
      * @return array
      */
-    public static function findMinLeftPlans($plans): array
+    private function findMinLeftPlans($plans): array
     {
         $minLeft = PHP_INT_MAX;
         $res = [];
@@ -152,51 +200,55 @@ class Solution
     }
 
     /**
-     * 查找与用户设定的持仓比例最接近的购买方案
-     * @param $plans
-     * @param $stocks
-     * @param $total
+     * 获取购买方案中最优的方案
+     * @param $plans array
+     * @param $count int 保留方案的个数
      * @return array
      */
-    public static function findBestPlan($plans, $stocks, $total): array
+    private function findBestPlans(array $plans, int $count): array
     {
-        if (empty($plans)) {
-            return [];
-        }
-        if (count($plans) == 1) {
-            return $plans[0];
-        }
-        $bestPlan = [];
-        $minDispersion = PHP_INT_MAX;
-        list($prices, $weights) = $stocks;
+        $res = [];
         foreach ($plans as $plan) {
-            $totalSpent = $total - $plan['left'];
-            $hand = $plan['hand'];
-            $newWeights = [];
-            foreach ($prices as $i => $price) {
-                $newWeights[$i] = $price * static::$ONE_HAND * $hand[$i] / $totalSpent;
+            // 如果有钱花完了，并且满足给定的仓位配置的
+            // 立即返回
+            if ($plan['dispersion'] == 0 && $plan['left'] == 0) {
+                return [$plan];
             }
-            $plan['dispersion'] = static::calcDispersion($weights, $newWeights);
-            // echo "\n" . $plan['dispersion'];
-            if ($plan['dispersion'] < $minDispersion) {
-                $minDispersion = $plan['dispersion'];
-                $bestPlan = $plan;
+            $insert = false;
+            foreach ($res as $i => $p) {
+                if ($plan['dispersion'] <= $p['dispersion']) {
+                    $insert = true;
+                    array_splice($res, $i, 0, [$plan]);
+                    break;
+                }
+            }
+            if (!$insert) {
+                $res[] = $plan;
             }
         }
-        return $bestPlan;
+        array_splice($res, $count);
+        return $res;
     }
 
     /**
-     * 计算实际仓位比例与期望仓位比例的偏离度
-     * @param $weights
-     * @param $actuals
-     * @return float
+     * 计算购买方案的偏离度
+     * @param $plan array 购买方案
+     * @return float|int|object
      */
-    protected static function calcDispersion($weights, $actuals)
+    private function calcDispersion(array $plan)
     {
+        $totalSpent = $this->total - $plan['left'];
+        if ($totalSpent == 0) {
+            return PHP_INT_MAX;
+        }
+        $actualWeights = [];
+        $hands = $plan['hands'];
+        foreach ($this->prices as $i => $price) {
+            $actualWeights[$i] = $price * $hands[$i] / $totalSpent;
+        }
         $dispersion = 0;
-        foreach ($weights as $i => $weight) {
-            $dispersion += pow($weight * 10 - $actuals[$i] * 10, 2);
+        foreach ($this->weights as $i => $weight) {
+            $dispersion += pow($weight * 10 - $actualWeights[$i] * 10, 2);
         }
         return $dispersion;
     }

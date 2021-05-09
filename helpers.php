@@ -5,10 +5,10 @@
  */
 function dd()
 {
-	foreach (func_get_args() as $arg) {
-		var_dump($arg);
-	}
-	die;
+    foreach (func_get_args() as $arg) {
+        var_dump($arg);
+    }
+    die;
 }
 
 /**
@@ -19,9 +19,9 @@ function dd()
  */
 function array_add(array $a1, array $a2): array
 {
-	$res = [];
-	foreach ($a1 as $key => $value) {
-		$res[$key] = $value + $a2[$key];
-	}
-	return $res;
+    $res = [];
+    foreach ($a1 as $key => $value) {
+        $res[$key] = $value + $a2[$key];
+    }
+    return $res;
 }
